@@ -1,0 +1,209 @@
+<title>Karipap Arca</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Arca tanah liat berbentuk karipap — model 3D fotogrametri, boleh diputar 360°, dizum dan dilihat dalam AR.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Layout: one full-height "studio" stage; the sculpture sits centre, a slim label card
+   floats bottom-left like a gallery wall label, controls float bottom-right. */
+:root {
+  --ground: #e7e5e1;        /* studio backdrop, slightly warm grey */
+  --ground-2: #d6d3cd;      /* floor gradient */
+  --ink: #1f2124;           /* text */
+  --ink-soft: #5c5f64;      /* secondary text */
+  --panel: rgba(250, 249, 247, 0.86);
+  --line: rgba(31, 33, 36, 0.14);
+  --accent: #8a6a3d;        /* fired-clay ochre, used sparingly */
+  --font-display: "Bricolage Grotesque", "Inter", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #26272a; --ground-2: #161719; --ink: #eceae6; --ink-soft: #a5a29c;
+    --panel: rgba(30, 31, 34, 0.84); --line: rgba(236, 234, 230, 0.14); --accent: #d2a86c;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #26272a; --ground-2: #161719; --ink: #eceae6; --ink-soft: #a5a29c;
+  --panel: rgba(30, 31, 34, 0.84); --line: rgba(236, 234, 230, 0.14); --accent: #d2a86c;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: radial-gradient(120% 90% at 50% 35%, var(--ground) 0%, var(--ground-2) 100%);
+  color: var(--ink);
+  font-family: var(--font-body);
+  overflow: hidden;
+}
+.stage { position: relative; height: 100%; }
+model-viewer {
+  width: 100%; height: 100%; display: block;
+  background: transparent;
+  --poster-color: transparent;
+  --progress-bar-color: var(--accent);
+  outline: none;
+}
+.label {
+  position: absolute;
+  left: max(16px, env(safe-area-inset-left, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  max-width: min(340px, calc(100% - 32px));
+  background: var(--panel);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: grid; gap: 6px;
+}
+.label h1 {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: 1.5rem; line-height: 1.05; margin: 0; letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.label .meta { font-size: 0.8rem; color: var(--ink-soft); line-height: 1.45; margin: 0; }
+.label .spec {
+  font-family: var(--font-mono); font-size: 0.7rem; color: var(--ink-soft);
+  letter-spacing: 0.02em; margin: 0;
+}
+.hint {
+  position: absolute; top: calc(14px + env(safe-area-inset-top, 0px)); left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.75rem; color: var(--ink-soft);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+  padding: 6px 12px; white-space: nowrap; max-width: calc(100% - 32px);
+  overflow: hidden; text-overflow: ellipsis;
+  transition: opacity .6s ease;
+}
+.hint.gone { opacity: 0; pointer-events: none; }
+.controls {
+  position: absolute;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+}
+.btn {
+  font: 500 0.82rem/1 var(--font-body);
+  color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 10px 14px; cursor: pointer;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.btn:hover { border-color: var(--accent); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.btn svg { width: 16px; height: 16px; flex: none; }
+.btn.ar { background: var(--ink); color: var(--ground); border-color: var(--ink); }
+.loading {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 0.85rem; color: var(--ink-soft); pointer-events: none;
+}
+@media (max-width: 560px) {
+  .label { bottom: auto; top: calc(52px + env(safe-area-inset-top, 0px)); padding: 10px 12px; }
+  .label h1 { font-size: 1.2rem; }
+  .label .meta { display: none; }
+  .controls { flex-direction: row; flex-wrap: wrap; justify-content: flex-end;
+    left: max(16px, env(safe-area-inset-left, 0px)); }
+}
+@media (prefers-reduced-motion: reduce) { .hint { transition: none; } }
+</style>
+
+<script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
+
+<main class="stage">
+  <model-viewer id="mv"
+    src="karipap.glb"
+    ios-src="karipap.usdz"
+    alt="Arca tanah liat berbentuk karipap dengan lipatan berkelim di bahagian atas"
+    camera-controls
+    touch-action="none"
+    auto-rotate auto-rotate-delay="1500" rotation-per-second="18deg"
+    interaction-prompt="none"
+    camera-orbit="25deg 70deg auto"
+    min-camera-orbit="auto 0deg auto" max-camera-orbit="auto 180deg auto"
+    min-field-of-view="6deg"
+    shadow-intensity="1" shadow-softness="0.8"
+    exposure="1.0" tone-mapping="neutral"
+    ar ar-modes="webxr scene-viewer quick-look" ar-scale="auto" ar-placement="floor">
+    <button slot="ar-button" class="btn ar" id="arBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z"/><path d="m3 7 9 5 9-5M12 12v10"/></svg>
+      Lihat dalam AR
+    </button>
+    <div slot="progress-bar"></div>
+  </model-viewer>
+  <div class="loading" id="loading">Memuatkan model 3D…</div>
+
+  <p class="hint" id="hint">Seret untuk putar 360° · Cubit / skrol untuk zoom · Dua jari untuk gerak</p>
+
+  <section class="label" aria-label="Maklumat arca">
+    <h1>Karipap Arca</h1>
+    <p class="meta">Arca tanah liat berbentuk karipap. Kesan cap jari, lekuk kelim dan bayang-bayangnya dirakam terus daripada objek sebenar.</p>
+    <p class="spec" id="spec">Fotogrametri · COLMAP + OpenMVS</p>
+  </section>
+
+  <div class="controls">
+    <button class="btn" id="rotateBtn" aria-pressed="true" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+      Auto-putar
+    </button>
+    <button class="btn" id="lightBtn" type="button" aria-pressed="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      Cahaya sisi
+    </button>
+    <button class="btn" id="resetBtn" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></svg>
+      Set semula
+    </button>
+  </div>
+</main>
+
+<script>
+(() => {
+  const mv = document.getElementById('mv');
+  const hint = document.getElementById('hint');
+  const loading = document.getElementById('loading');
+  const rotateBtn = document.getElementById('rotateBtn');
+  const lightBtn = document.getElementById('lightBtn');
+  const resetBtn = document.getElementById('resetBtn');
+
+  mv.addEventListener('load', () => { loading.hidden = true; });
+  mv.addEventListener('error', () => {
+    loading.hidden = false;
+    loading.textContent = 'Model tidak dapat dimuatkan. Muat semula halaman ini.';
+  });
+  mv.addEventListener('progress', (e) => {
+    const p = Math.round((e.detail.totalProgress || 0) * 100);
+    if (p < 100) loading.textContent = 'Memuatkan model 3D… ' + p + '%';
+  });
+
+  let hintTimer = setTimeout(() => hint.classList.add('gone'), 6000);
+  mv.addEventListener('camera-change', (e) => {
+    if (e.detail.source === 'user') { hint.classList.add('gone'); clearTimeout(hintTimer); }
+  });
+
+  rotateBtn.addEventListener('click', () => {
+    const on = !mv.autoRotate;
+    mv.autoRotate = on;
+    rotateBtn.setAttribute('aria-pressed', String(on));
+  });
+
+  // "Cahaya sisi" = raking light: harder, lower shadows that pull out fingerprints and folds
+  lightBtn.addEventListener('click', () => {
+    const on = lightBtn.getAttribute('aria-pressed') !== 'true';
+    lightBtn.setAttribute('aria-pressed', String(on));
+    mv.exposure = on ? 1.25 : 1.0;
+    mv.shadowSoftness = on ? 0.15 : 0.8;
+    mv.environmentImage = on ? 'legacy' : 'neutral';
+  });
+
+  resetBtn.addEventListener('click', () => {
+    mv.cameraOrbit = '25deg 70deg auto';
+    mv.cameraTarget = 'auto auto auto';
+    mv.fieldOfView = 'auto';
+    mv.jumpCameraToGoal();
+  });
+})();
+</script>
