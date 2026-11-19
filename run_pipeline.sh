@@ -25,19 +25,38 @@ python3 scripts/sfm_learned.py --images $W/sfm/images --masks $W/sfm/masks --out
 python3 scripts/prepare_mvs.py --model $W/sfm/sparse --images $W/sfm/images \
     --masks $W/sfm/masks --out $W/mvs
 
-# 5. OpenMVS: dense -> mesh -> clean/close holes -> refine -> texture
+# 5. OpenMVS: dense -> mesh -> clean -> carve (visual hull) -> refine
+#    (OpenMVS v2.3.0 + patches/openmvs-2.3-formatTime-overflow.patch)
 cd $W/mvs
 $OMVS/InterfaceCOLMAP -i . -o scene.mvs --image-folder images
 $OMVS/DensifyPointCloud scene.mvs --mask-path masks --resolution-level 0 \
-    --max-resolution 4096 --number-views 8 --number-views-fuse 3 --remove-dmaps 0
+    --max-resolution 4096 --min-resolution 640 --number-views 8 --number-views-fuse 3
 $OMVS/ReconstructMesh scene_dense.mvs -p scene_dense.ply -o scene_mesh.ply
-python3 ../../scripts/clean_mesh.py scene_mesh.ply scene_mesh_clean.ply
-$OMVS/RefineMesh scene_dense.mvs -m scene_mesh_clean.ply -o scene_refine.ply \
-    --resolution-level 0 --max-face-area 8 --scales 2
-$OMVS/TextureMesh scene_dense.mvs -m scene_refine.ply -o scene_texture.obj \
-    --export-type obj --resolution-level 0 --max-texture-size 8192 \
-    --empty-color 12698551 --cost-smoothness-ratio 0.1
+cd ../..
+python3 scripts/clean_mesh.py $W/mvs/scene_mesh.ply $W/mvs/scene_mesh_clean.ply
+python3 scripts/carve_mesh.py $W/mvs/scene_mesh_clean.ply $W/mvs/scene_mesh_carved.ply \
+    --mvs $W/mvs --min-out-frac 0.3
+cd $W/mvs
+$OMVS/RefineMesh scene_dense.mvs -m scene_mesh_carved.ply -o scene_refine.ply \
+    --resolution-level 0 --min-resolution 640 --max-views 8 --max-face-area 16 --scales 2 \
+    --close-holes 0
 cd ../..
 
-# 6. web + AR exports (GLB for browsers/Android, USDZ for iPhone)
-python3 scripts/export_web.py $W/mvs/scene_texture.obj --model $W/mvs/sparse --out viewer
+# 6. colour consistency across the capture (top vs flipped segment, video vs stills)
+python3 scripts/normalize_colors.py --mvs $W/mvs
+python3 scripts/normalize_colors.py --calibrate-photos $W/mvs $W/mvs/scene_refine.ply
+cp $W/mvs/masks/*.mask.png $W/mvs/images/     # TextureMesh ignores label 0 (background)
+
+# 7. texture (OpenMVS), balance large-scale tone, upscale 2x keeping fine detail
+cd $W/mvs
+$OMVS/TextureMesh scene_dense.mvs -m scene_refine.ply -o scene_texture.ply \
+    --resolution-level 0 --min-resolution 640 --max-texture-size 8192 \
+    --empty-color 13222580 --close-holes 50 --ignore-mask-label 0
+cd ../..
+python3 scripts/balance_texture.py $W/mvs/scene_texture.ply $W/mvs/scene_texture0_bal.png --mvs $W/mvs
+python3 scripts/enhance_texture.py $W/mvs/scene_texture0_bal.png $W/mvs/tex_final.png --size 4096
+
+# 8. web + AR exports: GLB (browsers/Android AR), USDZ (iPhone AR), glTF+JSON for hosting
+python3 scripts/export_web.py $W/mvs/scene_texture.ply --model $W/mvs/sparse --out viewer \
+    --length 0.075 --texture $W/mvs/tex_final.png --max-texture 4096
+python3 scripts/build_viewer_variants.py

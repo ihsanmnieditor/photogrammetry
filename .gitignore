@@ -2,3 +2,5 @@ work/
 __pycache__/
 *.pyc
 *.log
+viewer/karipap.gltf
+viewer/karipap.bin

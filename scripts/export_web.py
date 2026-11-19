@@ -117,7 +117,12 @@ def main():
     ap.add_argument("--up-name-re", default=r"video__f_(\d+)")
     ap.add_argument("--up-max-ms", type=int, default=56000)
     ap.add_argument("--flip-up", action="store_true")
+    ap.add_argument("--texture", help="use this image instead of the mesh's own texture "
+                                      "(e.g. the upscaled atlas from enhance_texture.py)")
+    ap.add_argument("--lit", action="store_true", help="PBR-lit material instead of unlit")
     args = ap.parse_args()
+    global UNLIT
+    UNLIT = not args.lit
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -144,28 +149,111 @@ def main():
     dims = V.max(0) - V.min(0)
     print(f"size (m): L={dims[0]:.4f} H={dims[1]:.4f} W={dims[2]:.4f}")
 
-    # texture: limit size, re-encode JPEG
     mat = mesh.visual.material
     img = getattr(mat, "image", None) or getattr(mat, "baseColorTexture", None)
+    if args.texture:
+        img = Image.open(args.texture)
     img = img.convert("RGB")
-    if max(img.size) > args.max_texture:
-        img.thumbnail((args.max_texture, args.max_texture), Image.LANCZOS)
-    buf = io.BytesIO()
-    img.save(buf, "JPEG", quality=90, optimize=True)
-    jpg = buf.getvalue()
-    print(f"texture {img.size}, {len(jpg) / 1e6:.1f} MB")
+    V = np.asarray(mesh.vertices, np.float32)
+    F = np.asarray(mesh.faces, np.uint32)
+    N = np.asarray(mesh.vertex_normals, np.float32)
+    UV = np.asarray(mesh.visual.uv, np.float32)
 
-    pbr = trimesh.visual.material.PBRMaterial(
-        baseColorTexture=Image.open(io.BytesIO(jpg)), metallicFactor=0.0, roughnessFactor=0.85,
-        doubleSided=False)
-    mesh.visual = trimesh.visual.TextureVisuals(uv=mesh.visual.uv, material=pbr)
-    glb = mesh.export(file_type="glb")
-    (out / "karipap.glb").write_bytes(glb)
-    print(f"karipap.glb {len(glb) / 1e6:.1f} MB")
+    def jpeg(size, q):
+        im = img.copy()
+        if max(im.size) > size:
+            im.thumbnail((size, size), Image.LANCZOS)
+        b = io.BytesIO()
+        im.save(b, "JPEG", quality=q, optimize=True, progressive=True)
+        return b.getvalue(), im.size
 
-    write_usdz(out / "karipap.usdz", np.asarray(mesh.vertices), np.asarray(mesh.faces),
-               np.asarray(mesh.vertex_normals), np.asarray(mesh.visual.uv), jpg)
+    # 1) web viewer: .gltf + .bin + full-res texture as separate files (each < 15 MB)
+    hi_jpg, hi_size = jpeg(args.max_texture, 88)
+    (out / "karipap_texture.jpg").write_bytes(hi_jpg)
+    write_gltf(out / "karipap.gltf", out / "karipap.bin", V, F, N, UV, "karipap_texture.jpg")
+    print(f"karipap.gltf/.bin {(out / 'karipap.bin').stat().st_size / 1e6:.1f} MB, "
+          f"texture {hi_size} {len(hi_jpg) / 1e6:.1f} MB")
+
+    # 2) single-file GLB (AR on Android, offline HTML) with a 4K texture
+    lo_jpg, lo_size = jpeg(4096, 88)
+    write_glb(out / "karipap.glb", V, F, N, UV, lo_jpg)
+    print(f"karipap.glb {(out / 'karipap.glb').stat().st_size / 1e6:.1f} MB (texture {lo_size})")
+
+    # 3) USDZ for iPhone / iPad Quick Look AR, same 4K texture
+    write_usdz(out / "karipap.usdz", V, F, N, UV, lo_jpg)
     print(f"karipap.usdz {(out / 'karipap.usdz').stat().st_size / 1e6:.1f} MB")
+
+
+UNLIT = True
+
+
+def _gltf_json(V, F, N, UV, image):
+    import json
+    nv = len(V)
+    views, accessors = [], []
+    offset = 0
+    for arr, target, typ, comp in ((V, 34962, "VEC3", 5126), (N, 34962, "VEC3", 5126),
+                                   (UV, 34962, "VEC2", 5126), (F, 34963, "SCALAR", 5125)):
+        nbytes = arr.nbytes
+        views.append({"buffer": 0, "byteOffset": offset, "byteLength": nbytes, "target": target})
+        acc = {"bufferView": len(views) - 1, "componentType": comp,
+               "count": nv if typ != "SCALAR" else int(F.size), "type": typ}
+        if arr is V:
+            acc["min"], acc["max"] = V.min(0).tolist(), V.max(0).tolist()
+        accessors.append(acc)
+        offset += nbytes
+    doc = {
+        "asset": {"version": "2.0", "generator": "photogrammetry/export_web.py"},
+        "scene": 0, "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0, "name": "Karipap"}],
+        "meshes": [{"name": "Karipap", "primitives": [{
+            "attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2},
+            "indices": 3, "material": 0}]}],
+        "materials": [{"name": "Clay", "pbrMetallicRoughness": {
+            "baseColorTexture": {"index": 0}, "metallicFactor": 0.0, "roughnessFactor": 0.85},
+            # photogrammetry texture already contains the real light & shadows:
+            # show it as captured (viewer falls back to lit PBR if unsupported)
+            **({"extensions": {"KHR_materials_unlit": {}}} if UNLIT else {})}],
+        **({"extensionsUsed": ["KHR_materials_unlit"]} if UNLIT else {}),
+        "textures": [{"source": 0, "sampler": 0}],
+        "samplers": [{"magFilter": 9729, "minFilter": 9987, "wrapS": 33071, "wrapT": 33071}],
+        "images": [image],
+        "accessors": accessors, "bufferViews": views,
+        "buffers": [{"byteLength": offset}],
+    }
+    return doc, offset, json
+
+
+def _gltf_bin(V, F, N, UV):
+    uv = UV.copy()
+    uv[:, 1] = 1.0 - uv[:, 1]  # OBJ (v up) -> glTF (v down)
+    return b"".join(a.astype(a.dtype).tobytes() for a in (V, N, uv.astype(np.float32), F))
+
+
+def write_gltf(gltf_path, bin_path, V, F, N, UV, image_uri):
+    doc, n, json = _gltf_json(V, F, N, UV, {"uri": image_uri, "mimeType": "image/jpeg"})
+    doc["buffers"][0]["uri"] = Path(bin_path).name
+    Path(bin_path).write_bytes(_gltf_bin(V, F, N, UV))
+    Path(gltf_path).write_text(json.dumps(doc))
+
+
+def write_glb(path, V, F, N, UV, jpg):
+    import struct
+    binary = _gltf_bin(V, F, N, UV)
+    pad = (-len(binary)) % 4
+    img_off = len(binary) + pad
+    doc, n, json = _gltf_json(V, F, N, UV, {"bufferView": 4, "mimeType": "image/jpeg"})
+    doc["bufferViews"].append({"buffer": 0, "byteOffset": img_off, "byteLength": len(jpg)})
+    blob = binary + b"\0" * pad + jpg
+    blob += b"\0" * ((-len(blob)) % 4)
+    doc["buffers"][0]["byteLength"] = len(blob)
+    js = json.dumps(doc).encode()
+    js += b" " * ((-len(js)) % 4)
+    total = 12 + 8 + len(js) + 8 + len(blob)
+    with open(path, "wb") as f:
+        f.write(struct.pack("<III", 0x46546C67, 2, total))
+        f.write(struct.pack("<II", len(js), 0x4E4F534A) + js)
+        f.write(struct.pack("<II", len(blob), 0x004E4942) + blob)
 
 
 if __name__ == "__main__":
