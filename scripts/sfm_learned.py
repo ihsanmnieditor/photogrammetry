@@ -78,6 +78,67 @@ def make_pairs(names, window, every):
     return sorted(pairs)
 
 
+def set_cameras(db, args):
+    """One SIMPLE_RADIAL camera per folder (single focal: OPENCV's separate fx/fy
+    drifted apart during initialisation and broke registration)."""
+    done = set()
+    for im in db.read_all_images():
+        if im.camera_id in done:
+            continue
+        done.add(im.camera_id)
+        cam = db.read_camera(im.camera_id)
+        f = args.focal_photos if im.name.startswith("photos/") else args.focal_video
+        cam.model = pycolmap.CameraModelId.SIMPLE_RADIAL
+        cam.params = [f, cam.width / 2, cam.height / 2, 0.0]
+        cam.has_prior_focal_length = True
+        db.update_camera(cam)
+        print(f"camera {cam.camera_id}: {cam.width}x{cam.height} f0={f}", flush=True)
+
+
+def report(recs):
+    for k, r in recs.items():
+        regs = [im.name for im in r.images.values()]
+        print(f"model {k}: {r.num_reg_images()} images "
+              f"({sum(x.startswith('photos/') for x in regs)} photos), "
+              f"{r.num_points3D()} points, err {r.compute_mean_reprojection_error():.3f}px",
+              flush=True)
+        for c in r.cameras.values():
+            print("   camera", c.camera_id, np.round(c.params, 4))
+
+
+def run_mapping(db_path, root, out):
+    """Stage 1: map the video frames only. Stage 2: register the 4K photos into it."""
+    pycolmap.verify_matches(db_path, out / "pairs.txt")
+    db = pycolmap.Database.open(db_path)
+    names = [im.name for im in db.read_all_images()]
+    db.close()
+
+    def options(image_names):
+        o = pycolmap.IncrementalPipelineOptions()
+        o.image_names = image_names
+        o.min_num_matches = 20
+        o.mapper.abs_pose_min_num_inliers = 20
+        o.mapper.init_min_tri_angle = 8.0      # narrow (zoomed) field of view
+        o.ba_refine_principal_point = False
+        o.multiple_models = False
+        return o
+
+    s1 = out / "sparse_video"
+    s1.mkdir(exist_ok=True)
+    recs = pycolmap.incremental_mapping(
+        db_path, root, s1, options=options([n for n in names if n.startswith("video/")]))
+    print("stage 1 (video):")
+    report(recs)
+    best = max(recs, key=lambda k: recs[k].num_reg_images())
+
+    s2 = out / "sparse"
+    s2.mkdir(exist_ok=True)
+    recs2 = pycolmap.incremental_mapping(db_path, root, s2, options=options(names),
+                                         input_path=s1 / str(best))
+    print("stage 2 (+ photos):")
+    report(recs2)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--images", required=True)
@@ -88,7 +149,11 @@ def main():
     ap.add_argument("--window", type=int, default=8)
     ap.add_argument("--every", type=int, default=4)
     ap.add_argument("--focal-photos", type=float, default=3900.0)  # 36mm-eq @ 4096 px
-    ap.add_argument("--focal-video", type=float, default=1500.0)   # rough guess, refined in BA
+    # the video was shot zoomed in: SfM converges to ~3700 px at 1920 wide (~29 deg HFOV)
+    ap.add_argument("--focal-video", type=float, default=3700.0)
+    ap.add_argument("--reuse-matches", action="store_true",
+                    help="keep features/matches in the existing database; redo verification "
+                         "and mapping only (e.g. after changing focal priors)")
     args = ap.parse_args()
 
     torch.set_grad_enabled(False)
@@ -97,6 +162,13 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     db_path = out / "database.db"
+    if args.reuse_matches:
+        db = pycolmap.Database.open(db_path)
+        set_cameras(db, args)
+        db.clear_two_view_geometries()
+        db.close()
+        run_mapping(db_path, root, out)
+        return
     if db_path.exists():
         db_path.unlink()
 
@@ -113,18 +185,7 @@ def main():
 
     db = pycolmap.Database.open(db_path)
     id_of = {im.name: im.image_id for im in db.read_all_images()}
-    cam_of = {im.name: im.camera_id for im in db.read_all_images()}
-    done = set()
-    for n, cid in cam_of.items():
-        if cid in done:
-            continue
-        done.add(cid)
-        cam = db.read_camera(cid)
-        f = args.focal_photos if n.startswith("photos/") else args.focal_video
-        cam.params = [f, f, cam.width / 2, cam.height / 2, 0, 0, 0, 0]
-        cam.has_prior_focal_length = n.startswith("photos/")
-        db.update_camera(cam)
-        print(f"camera {cid}: {cam.width}x{cam.height} f0={f} ({n.split('/')[0]})")
+    set_cameras(db, args)
 
     # --- features -------------------------------------------------------------
     disk = KF.DISK.from_pretrained("depth").eval()
@@ -168,24 +229,7 @@ def main():
                 print(f"  {k}/{len(pairs)} matched, {n_written} kept", flush=True)
     db.close()
 
-    pycolmap.verify_matches(db_path, pairs_txt)
-
-    opts = pycolmap.IncrementalPipelineOptions()
-    opts.min_num_matches = 20
-    opts.mapper.abs_pose_min_num_inliers = 20
-    opts.ba_refine_principal_point = False
-    opts.multiple_models = True
-    sparse = out / "sparse"
-    sparse.mkdir(exist_ok=True)
-    recs = pycolmap.incremental_mapping(db_path, root, sparse, options=opts)
-    for k, r in recs.items():
-        regs = sorted(im.name for im in r.images.values())
-        print(f"model {k}: {r.num_reg_images()} images "
-              f"({sum(x.startswith('photos/') for x in regs)} photos), "
-              f"{r.num_points3D()} points, err {r.compute_mean_reprojection_error():.3f}px")
-        for c in r.cameras.values():
-            print("   camera", c.camera_id, c.params[:2])
-
+    run_mapping(db_path, root, out)
 
 if __name__ == "__main__":
     main()

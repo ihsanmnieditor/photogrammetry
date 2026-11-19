@@ -22,7 +22,7 @@ ln -sfn ../../frame_masks $W/sfm/masks/video; ln -sfn ../../../masks $W/sfm/mask
 python3 scripts/sfm_learned.py --images $W/sfm/images --masks $W/sfm/masks --out $W/sfm
 
 # 4. undistort + crop to object, write COLMAP text model for OpenMVS
-python3 scripts/prepare_mvs.py --model $W/sfm/sparse/0 --images $W/sfm/images \
+python3 scripts/prepare_mvs.py --model $W/sfm/sparse --images $W/sfm/images \
     --masks $W/sfm/masks --out $W/mvs
 
 # 5. OpenMVS: dense -> mesh -> clean/close holes -> refine -> texture

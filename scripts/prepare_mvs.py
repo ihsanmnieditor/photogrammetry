@@ -14,7 +14,7 @@ Output:
   <out>/sparse/{cameras,images,points3D}.txt
 
 Usage:
-  python scripts/prepare_mvs.py --model work/sfm/sparse/0 --images work/sfm/images \
+  python scripts/prepare_mvs.py --model work/sfm/sparse --images work/sfm/images \
       --masks work/sfm/masks --out work/mvs [--dilate 6]
 """
 import argparse
@@ -50,7 +50,17 @@ def main():
         if keep_prefix and not any(im.name.startswith(p) for p in keep_prefix):
             continue
         cam = rec.camera(im.camera_id)
-        fx, fy, cx, cy, k1, k2, p1, p2 = cam.params
+        prm = list(cam.params)
+        if cam.model_name == "OPENCV":
+            fx, fy, cx, cy, k1, k2, p1, p2 = prm
+        elif cam.model_name == "SIMPLE_RADIAL":
+            fx, cx, cy, k1 = prm
+            fy, k2, p1, p2 = fx, 0.0, 0.0, 0.0
+        elif cam.model_name == "RADIAL":
+            fx, cx, cy, k1, k2 = prm
+            fy, p1, p2 = fx, 0.0, 0.0
+        else:
+            raise ValueError(f"unsupported camera model {cam.model_name}")
         K = np.array([[fx, 0, cx - 0.5], [0, fy, cy - 0.5], [0, 0, 1]])  # OpenCV convention
         dist = np.array([k1, k2, p1, p2])
         img = cv2.imread(str(Path(args.images) / im.name))
@@ -66,7 +76,7 @@ def main():
         ys, xs = np.nonzero(mask_u > 127)
         if len(xs) == 0:
             continue
-        pad = int(args.margin * max(xs.ptp(), ys.ptp()))
+        pad = int(args.margin * max(np.ptp(xs), np.ptp(ys)))
         x0, y0 = max(0, xs.min() - pad), max(0, ys.min() - pad)
         x1, y1 = min(w, xs.max() + pad + 1), min(h, ys.max() + pad + 1)
         crop, mcrop = img_u[y0:y1, x0:x1], mask_u[y0:y1, x0:x1]
