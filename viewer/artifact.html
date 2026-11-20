@@ -2,7 +2,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Karipap Arca</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<meta name="description" content="Arca tanah liat berbentuk karipap — model 3D fotogrametri, boleh diputar 360°, dizum dan dilihat dalam AR.">
+<meta name="description" content="Arca tanah liat berbentuk karipap — model 3D fotogrametri, boleh diputar 360°, dizum dan dizum sehingga nampak cap jari.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
@@ -42,13 +42,11 @@ body {
   overflow: hidden;
 }
 .stage { position: relative; height: 100%; }
-model-viewer {
-  width: 100%; height: 100%; display: block;
-  background: transparent;
-  --poster-color: transparent;
-  --progress-bar-color: var(--accent);
-  outline: none;
+#view {
+  position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+  touch-action: none; outline: none; cursor: grab;
 }
+#view:active { cursor: grabbing; }
 .label {
   position: absolute;
   left: max(16px, env(safe-area-inset-left, 0px));
@@ -121,28 +119,11 @@ model-viewer {
 @media (prefers-reduced-motion: reduce) { .hint { transition: none; } }
 </style>
 
-<script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
 <main class="stage">
-  <model-viewer id="mv"
-    src="karipap.json"
-    alt="Arca tanah liat berbentuk karipap dengan lipatan berkelim di bahagian atas"
-    camera-controls
-    touch-action="none"
-    auto-rotate auto-rotate-delay="1500" rotation-per-second="18deg"
-    interaction-prompt="none"
-    camera-orbit="25deg 70deg auto"
-    min-camera-orbit="auto 0deg auto" max-camera-orbit="auto 180deg auto"
-    min-field-of-view="6deg"
-    shadow-intensity="1" shadow-softness="0.8"
-    exposure="1.0" tone-mapping="neutral"
-    ar ar-modes="webxr scene-viewer quick-look" ar-scale="auto" ar-placement="floor">
-    <button slot="ar-button" class="btn ar" id="arBtn">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z"/><path d="m3 7 9 5 9-5M12 12v10"/></svg>
-      Lihat dalam AR
-    </button>
-    <div slot="progress-bar"></div>
-  </model-viewer>
+  <canvas id="view" aria-label="Model 3D arca tanah liat berbentuk karipap. Seret untuk memutar, cubit atau skrol untuk zoom."></canvas>
   <div class="loading" id="loading">Memuatkan model 3D…</div>
 
   <p class="hint" id="hint">Seret untuk putar 360° · Cubit / skrol untuk zoom · Dua jari untuk gerak</p>
@@ -170,54 +151,195 @@ model-viewer {
 </main>
 
 <script>
+/* three.js viewer. Loads karipap_mesh.json (one relative fetch, arrays as base64,
+   decoded here) and karipap_texture.jpg as a plain image: no data:/blob: fetches,
+   so it works under a strict Content-Security-Policy. */
 (() => {
-  const mv = document.getElementById('mv');
-  const hint = document.getElementById('hint');
+  const canvas = document.getElementById('view');
   const loading = document.getElementById('loading');
+  const hint = document.getElementById('hint');
   const rotateBtn = document.getElementById('rotateBtn');
   const detailBtn = document.getElementById('detailBtn');
   const resetBtn = document.getElementById('resetBtn');
+  const fail = (msg) => { loading.hidden = false; loading.textContent = msg; };
 
-  const done = () => { loading.hidden = true; };
-  mv.addEventListener('load', done);
-  if (mv.loaded) done();
-  mv.addEventListener('error', () => {
-    loading.hidden = false;
-    loading.textContent = 'Model tidak dapat dimuatkan. Muat semula halaman ini.';
-  });
-  mv.addEventListener('progress', (e) => {
-    const p = Math.round((e.detail.totalProgress || 0) * 100);
-    if (mv.loaded || p >= 100) { done(); return; }
-    loading.textContent = 'Memuatkan model 3D… ' + p + '%';
-  });
+  if (!window.THREE || !THREE.OrbitControls) {
+    fail('Pemapar 3D tidak dapat dimuatkan. Semak sambungan internet dan muat semula.');
+    return;
+  }
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  } catch (e) {
+    fail('Pelayar ini tidak menyokong WebGL, jadi model 3D tidak dapat dipaparkan.');
+    return;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(30, 1, 0.001, 10);
+  const controls = new THREE.OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.autoRotateSpeed = 3.0;          // ~18 deg per second
+  controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
 
-  let hintTimer = setTimeout(() => hint.classList.add('gone'), 6000);
-  mv.addEventListener('camera-change', (e) => {
-    if (e.detail.source === 'user') { hint.classList.add('gone'); clearTimeout(hintTimer); }
-  });
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let fitRadius = 0.05, center = new THREE.Vector3(), homeDist = 0.3;
+  let anim = null; // camera flight {from, to, t}
+  let interacted = false;
 
-  rotateBtn.addEventListener('click', () => {
-    const on = !mv.autoRotate;
-    mv.autoRotate = on;
+  const sph = (thetaDeg, phiDeg, dist) => {   // model-viewer style orbit
+    const t = THREE.MathUtils.degToRad(thetaDeg), p = THREE.MathUtils.degToRad(phiDeg);
+    return new THREE.Vector3(Math.sin(p) * Math.sin(t), Math.cos(p), Math.sin(p) * Math.cos(t))
+      .multiplyScalar(dist).add(center);
+  };
+  const flyTo = (pos) => {
+    if (reduceMotion) { camera.position.copy(pos); controls.target.copy(center); return; }
+    anim = { from: camera.position.clone(), fromT: controls.target.clone(), to: pos, t: 0 };
+  };
+  const setAuto = (on) => {
+    controls.autoRotate = on;
     rotateBtn.setAttribute('aria-pressed', String(on));
-  });
+  };
 
-  // close-up of the crimped edge, where the maker's fingerprints are clearest
+  // distance that fits the model in BOTH directions (portrait phones are narrow)
+  function fitDist() {
+    const v = THREE.MathUtils.degToRad(camera.fov);
+    const h = 2 * Math.atan(Math.tan(v / 2) * camera.aspect);
+    return fitRadius / Math.sin(Math.min(v, h) / 2) * 1.08;
+  }
+
+  function resize() {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    if (window.__viewerOk) {
+      const d = fitDist();
+      if (!interacted) camera.position.sub(center).setLength(d).add(center);
+      homeDist = d;
+      controls.minDistance = d * 0.18; controls.maxDistance = d * 3;
+    }
+  }
+  new ResizeObserver(resize).observe(canvas);
+  resize();
+
+  function b64(str, Type) {
+    const bin = atob(str), n = bin.length, buf = new Uint8Array(n);
+    for (let i = 0; i < n; i++) buf[i] = bin.charCodeAt(i);
+    return new Type(buf.buffer);
+  }
+
+  async function fetchJSON(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const total = +res.headers.get('content-length') || 0;
+    if (!res.body || !total) return res.json();
+    const reader = res.body.getReader(), parts = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value); got += value.length;
+      loading.textContent = 'Memuatkan model 3D… ' + Math.min(99, Math.round(got / total * 100)) + '%';
+    }
+    const all = new Uint8Array(got); let o = 0;
+    for (const p of parts) { all.set(p, o); o += p.length; }
+    return JSON.parse(new TextDecoder().decode(all));
+  }
+
+  function loadTexture(url) {
+    return new Promise((ok, bad) => {
+      const img = new Image();
+      img.onload = () => ok(img);
+      img.onerror = () => bad(new Error('texture'));
+      img.src = url;
+    });
+  }
+
+  function contactShadow(w, d) {
+    const c = document.createElement('canvas'); c.width = c.height = 256;
+    const g = c.getContext('2d'), grd = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+    grd.addColorStop(0, 'rgba(0,0,0,0.42)'); grd.addColorStop(0.55, 'rgba(0,0,0,0.16)');
+    grd.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grd; g.fillRect(0, 0, 256, 256);
+    const tex = new THREE.CanvasTexture(c);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w * 1.35, d * 1.9),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+    m.rotation.x = -Math.PI / 2; m.position.y = 0.0002; m.renderOrder = -1;
+    return m;
+  }
+
+  Promise.all([fetchJSON('karipap_mesh.json'), loadTexture('karipap_texture.jpg')])
+    .then(([d, img]) => {
+      const lo = d.bboxMin, hi = d.bboxMax;
+      const q = b64(d.positions, Uint16Array), quv = b64(d.uvs, Uint16Array);
+      const pos = new Float32Array(q.length), uv = new Float32Array(quv.length);
+      for (let i = 0; i < q.length; i++) { const a = i % 3; pos[i] = lo[a] + q[i] / 65535 * (hi[a] - lo[a]); }
+      for (let i = 0; i < quv.length; i++) uv[i] = quv[i] / 65535;
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geom.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      geom.setIndex(new THREE.BufferAttribute(b64(d.indices, Uint32Array), 1));
+      geom.computeBoundingSphere();
+
+      const tex = new THREE.Texture(img);
+      tex.encoding = THREE.sRGBEncoding;
+      tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      tex.needsUpdate = true;
+      // unlit: the photographed texture already holds the real light and shadows
+      scene.add(new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ map: tex })));
+      scene.add(contactShadow(hi[0] - lo[0], hi[2] - lo[2]));
+
+      center.set((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2);
+      fitRadius = geom.boundingSphere.radius;
+      homeDist = fitDist();
+      controls.minDistance = homeDist * 0.18;
+      controls.maxDistance = homeDist * 3;
+      controls.maxPolarAngle = Math.PI;      // allow looking at the underside
+      controls.target.copy(center);
+      camera.position.copy(sph(25, 70, homeDist));
+      camera.near = homeDist / 100; camera.far = homeDist * 20; camera.updateProjectionMatrix();
+      loading.hidden = true;
+      window.__viewerOk = true;
+      setTimeout(() => { if (!interacted) setAuto(!reduceMotion); }, 1500);
+    })
+    .catch(() => fail('Model tidak dapat dimuatkan. Muat semula halaman ini.'));
+
+  controls.addEventListener('start', () => {
+    interacted = true; anim = null;
+    hint.classList.add('gone');
+    setAuto(false);
+  });
+  setTimeout(() => hint.classList.add('gone'), 6000);
+  setAuto(false);
+
+  rotateBtn.addEventListener('click', () => { interacted = true; setAuto(!controls.autoRotate); });
   detailBtn.addEventListener('click', () => {
+    interacted = true;
     const on = detailBtn.getAttribute('aria-pressed') !== 'true';
     detailBtn.setAttribute('aria-pressed', String(on));
-    mv.autoRotate = false;
-    rotateBtn.setAttribute('aria-pressed', 'false');
-    mv.cameraOrbit = on ? '180deg 62deg 32%' : '25deg 70deg auto';
-    if (!on) mv.fieldOfView = 'auto';
+    setAuto(false);
+    // close-up of the crimped edge, where the maker's fingerprints are clearest
+    flyTo(on ? sph(180, 62, homeDist * 0.55) : sph(25, 70, homeDist));
+  });
+  resetBtn.addEventListener('click', () => {
+    detailBtn.setAttribute('aria-pressed', 'false');
+    flyTo(sph(25, 70, homeDist));
   });
 
-  resetBtn.addEventListener('click', () => {
-    mv.cameraOrbit = '25deg 70deg auto';
-    mv.cameraTarget = 'auto auto auto';
-    mv.fieldOfView = 'auto';
-    detailBtn.setAttribute('aria-pressed', 'false');
-    mv.jumpCameraToGoal();
+  renderer.setAnimationLoop(() => {
+    if (anim) {
+      anim.t = Math.min(1, anim.t + 1 / 45);
+      const k = 1 - Math.pow(1 - anim.t, 3);
+      camera.position.lerpVectors(anim.from, anim.to, k);
+      controls.target.lerpVectors(anim.fromT, center, k);
+      if (anim.t >= 1) anim = null;
+    }
+    controls.update();
+    renderer.render(scene, camera);
   });
 })();
 </script>

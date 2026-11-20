@@ -9,7 +9,7 @@ viewer/index.html                 web viewer (model-viewer): rotate / zoom / pan
 viewer/karipap.glb                textured 3D model, 4K texture (browsers, Android AR, Blender…)
 viewer/karipap.usdz               same model for iPhone / iPad AR (Quick Look)
 viewer/karipap-arca-offline.html  single-file version with the model embedded (desktop / offline)
-viewer/artifact.html + karipap.json + karipap_texture.jpg   variant for hosts that only serve web types
+viewer/artifact.html + karipap_mesh.json + karipap_texture.jpg   three.js variant for strict-CSP hosts (the shared link)
 ```
 
 **Result:** 110k vertices / 221k faces, one solid piece (unseen areas closed), 4096² texture; ~7.5 × 3.1 × 2.0 cm
