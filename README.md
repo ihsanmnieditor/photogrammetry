@@ -55,3 +55,15 @@ The video (many overlapping views) plus object masks plus learned features fixed
 Send a **link** to the viewer page, not the `.html` file. WhatsApp opens `.html`
 attachments as plain files on most phones (no 3D). A link opens in the phone's
 browser, where the model can be rotated, zoomed and viewed in AR.
+
+## GitHub Pages (free public link, with AR)
+
+`docs/` is a ready-to-host site: `index.html` (model-viewer with 360°, zoom, AR),
+`karipap.glb`, `karipap.usdz`, `preview.jpg` (WhatsApp thumbnail via Open Graph tags).
+Rebuild with `python scripts/build_pages.py` and `node scripts/pages_preview.js`.
+
+To publish (free for public repositories):
+1. Repository **Settings → General → Danger Zone → Change visibility → Public**.
+2. **Settings → Pages → Build and deployment → Source: Deploy from a branch**,
+   pick the branch that has `docs/` and folder **`/docs`**, then **Save**.
+3. After 1–2 minutes the site is at `https://ihsanmnieditor.github.io/photogrammetry/`.
